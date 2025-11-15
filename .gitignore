@@ -35,9 +35,9 @@ lerna-debug.log*
 *.sln
 *.sw?
 
-# Personal notes (optional - remove if you want to share)
-info.txt
-problem.txt
+# Personal things
+other
+
 
 # OS files
 Thumbs.db
