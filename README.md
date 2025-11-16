@@ -663,7 +663,7 @@ USING (bucket_id = 'smartstorage');
 ## 🎉 Credits
 
 Built for the **Auraverse '25 Hackathon, SST**  
-Team: <span style="color: green;"><b>Hara Wala Kurkure</b></span><br>
+Team: $${\color{green} Hara \space Wala \space Kurkure}$$ <br>
 Repository: [github.com/Yuji25/AuraNexus](https://github.com/Yuji25/AuraNexus)
 
 ---
