@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
-import { Database, Table, Loader2, RefreshCw, ChevronRight, FileJson } from 'lucide-react';
+import { Database, Table, Loader2, RefreshCw, ChevronRight, FileJson, Trash2 } from 'lucide-react';
 import ReactJson from '@microlink/react-json-view';
-import { getSchemas, getTableData } from '../lib/api';
+import { getSchemas, getTableData, deleteSchema } from '../lib/api';
 import { cn } from '../lib/utils';
 
 export default function DataExplorerPanel() {
@@ -11,6 +11,7 @@ export default function DataExplorerPanel() {
   const [selectedTable, setSelectedTable] = useState(null);
   const [tableData, setTableData] = useState(null);
   const [loadingTable, setLoadingTable] = useState(false);
+  const [deletingSchemas, setDeletingSchemas] = useState(new Set());
 
   const loadSchemas = async () => {
     setLoading(true);
@@ -36,6 +37,37 @@ export default function DataExplorerPanel() {
       setTableData({ error: err.response?.data?.error || err.message });
     } finally {
       setLoadingTable(false);
+    }
+  };
+
+  const handleDeleteSchema = async (tableName, schemaName, e) => {
+    e.stopPropagation(); 
+    
+    if (!confirm(`Are you sure you want to delete schema "${schemaName}"? This will permanently delete all associated data. This action cannot be undone.`)) {
+      return;
+    }
+
+    setDeletingSchemas(prev => new Set(prev).add(tableName));
+
+    try {
+      await deleteSchema(tableName);
+      
+      
+      if (selectedTable === tableName) {
+        setSelectedTable(null);
+        setTableData(null);
+      }
+      
+      
+      await loadSchemas();
+    } catch (err) {
+      alert('Delete failed: ' + (err.response?.data?.error || err.message));
+    } finally {
+      setDeletingSchemas(prev => {
+        const next = new Set(prev);
+        next.delete(tableName);
+        return next;
+      });
     }
   };
 
@@ -96,54 +128,79 @@ export default function DataExplorerPanel() {
               <div className="space-y-1">
                 {schemas.map((schema, idx) => {
                   const isNoSQL = schema.schema_type === 'nosql' || schema.table_name === 'documents';
+                  const isDeleting = deletingSchemas.has(schema.table_name);
+                  const schemaName = isNoSQL ? `Document #${schema.document_id}` : schema.table_name;
+                  
                   return (
-                    <button
+                    <div
                       key={idx}
-                      onClick={() => loadTable(schema.table_name)}
                       className={cn(
-                        "w-full p-3 rounded-lg transition-colors text-left border",
+                        "relative group rounded-lg border transition-colors",
                         selectedTable === schema.table_name
                           ? "bg-primary text-primary-foreground border-primary"
                           : "bg-card hover:bg-muted border-border"
                       )}
                     >
-                      <div className="flex items-start gap-2">
-                        {isNoSQL ? (
-                          <FileJson className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                        ) : (
-                          <Table className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                        )}
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-1">
-                            <p className="font-medium text-sm truncate">
-                              {isNoSQL ? `Document #${schema.document_id}` : schema.table_name}
-                            </p>
-                            <span className={cn(
-                              "text-xs px-1.5 py-0.5 rounded font-semibold",
-                              isNoSQL
-                                ? selectedTable === schema.table_name
-                                  ? "bg-orange-500/20 text-orange-100"
-                                  : "bg-orange-500/10 text-orange-600"
-                                : selectedTable === schema.table_name
-                                  ? "bg-blue-500/20 text-blue-100"
-                                  : "bg-blue-500/10 text-blue-600"
+                      <button
+                        onClick={() => loadTable(schema.table_name)}
+                        disabled={isDeleting}
+                        className="w-full p-3 text-left"
+                      >
+                        <div className="flex items-start gap-2">
+                          {isNoSQL ? (
+                            <FileJson className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                          ) : (
+                            <Table className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-1">
+                              <p className="font-medium text-sm truncate">
+                                {schemaName}
+                              </p>
+                              <span className={cn(
+                                "text-xs px-1.5 py-0.5 rounded font-semibold",
+                                isNoSQL
+                                  ? selectedTable === schema.table_name
+                                    ? "bg-orange-500/20 text-orange-100"
+                                    : "bg-orange-500/10 text-orange-600"
+                                  : selectedTable === schema.table_name
+                                    ? "bg-blue-500/20 text-blue-100"
+                                    : "bg-blue-500/10 text-blue-600"
+                              )}>
+                                {isNoSQL ? 'NoSQL' : 'SQL'}
+                              </span>
+                            </div>
+                            <p className={cn(
+                              "text-xs truncate",
+                              selectedTable === schema.table_name ? "opacity-90" : "text-muted-foreground"
                             )}>
-                              {isNoSQL ? 'NoSQL' : 'SQL'}
-                            </span>
+                              {isNoSQL 
+                                ? (schema.created_at ? new Date(schema.created_at).toLocaleString() : 'No timestamp')
+                                : (schema.signature || 'Unstructured')
+                              }
+                            </p>
                           </div>
-                          <p className={cn(
-                            "text-xs truncate",
-                            selectedTable === schema.table_name ? "opacity-90" : "text-muted-foreground"
-                          )}>
-                            {isNoSQL 
-                              ? (schema.created_at ? new Date(schema.created_at).toLocaleString() : 'No timestamp')
-                              : (schema.signature || 'Unstructured')
-                            }
-                          </p>
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={(e) => handleDeleteSchema(schema.table_name, schemaName, e)}
+                              disabled={isDeleting}
+                              className={cn(
+                                "p-1 hover:bg-destructive/10 rounded transition-all",
+                                isDeleting ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                              )}
+                              title={isDeleting ? "Deleting..." : "Delete schema"}
+                            >
+                              {isDeleting ? (
+                                <Loader2 className="w-4 h-4 text-destructive animate-spin" />
+                              ) : (
+                                <Trash2 className="w-4 h-4 text-destructive" />
+                              )}
+                            </button>
+                            <ChevronRight className="w-4 h-4 flex-shrink-0" />
+                          </div>
                         </div>
-                        <ChevronRight className="w-4 h-4 flex-shrink-0" />
-                      </div>
-                    </button>
+                      </button>
+                    </div>
                   );
                 })}
               </div>

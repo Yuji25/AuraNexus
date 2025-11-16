@@ -51,3 +51,15 @@ export const downloadFile = async (filename) => {
   const response = await api.get(`/download/${encodeURIComponent(filename)}`);
   return response.data;
 };
+
+// Delete file
+export const deleteFile = async (filename) => {
+  const response = await api.delete(`/delete-file/${encodeURIComponent(filename)}`);
+  return response.data;
+};
+
+// Delete schema/table
+export const deleteSchema = async (tableName) => {
+  const response = await api.delete(`/delete-schema/${encodeURIComponent(tableName)}`);
+  return response.data;
+};

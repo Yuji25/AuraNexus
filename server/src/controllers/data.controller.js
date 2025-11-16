@@ -1,7 +1,7 @@
 import { supabase } from "../config/supabaseClient.js";
 import { logError, logInfo } from "../utils/logger.util.js";
 
-// GET /api/files - Retrieve all uploaded files
+
 export const getFiles = async (req, res) => {
   try {
     logInfo("Files endpoint hit");
@@ -20,12 +20,12 @@ export const getFiles = async (req, res) => {
   }
 };
 
-// GET /api/schemas - Retrieve all schemas from registry (SQL) and NoSQL documents
+
 export const getSchemas = async (req, res) => {
   try {
     logInfo("Schemas endpoint hit");
     
-    // Get SQL schemas
+
     const { data: sqlSchemas, error: sqlError } = await supabase
       .from("schemas")
       .select("*")
@@ -33,7 +33,7 @@ export const getSchemas = async (req, res) => {
 
     if (sqlError) throw new Error(sqlError.message);
 
-    // Get NoSQL documents - create individual schema entries for each document
+
     const { data: documents, error: docsError } = await supabase
       .from("documents")
       .select("id, created_at")
@@ -43,10 +43,8 @@ export const getSchemas = async (req, res) => {
       logError("Failed to get NoSQL documents", { error: docsError.message });
     }
 
-    // Create combined response with SQL schemas and individual NoSQL document entries
     const schemas = [...(sqlSchemas || [])];
-    
-    // Add each NoSQL document as a separate schema entry
+
     if (documents && documents.length > 0) {
       documents.forEach((doc) => {
         schemas.push({
@@ -66,18 +64,17 @@ export const getSchemas = async (req, res) => {
   }
 };
 
-// GET /api/data/:tableName - Retrieve data from a specific table
 export const getTableData = async (req, res) => {
   try {
     const { tableName } = req.params;
     logInfo("Table data endpoint hit", { tableName });
 
-    // Validate table name (security: prevent SQL injection)
+
     if (!/^[a-zA-Z0-9_]+$/.test(tableName)) {
       return res.status(400).json({ error: "Invalid table name" });
     }
 
-    // Handle individual NoSQL document retrieval (document_<id>)
+   
     if (tableName.startsWith('document_')) {
       const docId = tableName.replace('document_', '');
       
@@ -99,14 +96,14 @@ export const getTableData = async (req, res) => {
       });
     }
 
-    // Handle regular SQL tables
+
     const { data, error } = await supabase
       .from(tableName)
       .select("*")
       .limit(100);
 
     if (error) {
-      // Check if table doesn't exist
+
       if (error.message.includes("does not exist")) {
         return res.status(404).json({ error: "Table not found" });
       }
@@ -125,13 +122,13 @@ export const getTableData = async (req, res) => {
   }
 };
 
-// GET /api/download/:filename - Download file from Supabase storage (optimized for large files)
+
 export const downloadFile = async (req, res) => {
   try {
     const { filename } = req.params;
     logInfo("Download file endpoint hit", { filename });
 
-    // Get file record to find storage path
+
     const { data: fileRecord, error: dbError } = await supabase
       .from("files")
       .select("storage_path, filename, file_type")
@@ -142,7 +139,7 @@ export const downloadFile = async (req, res) => {
       return res.status(404).json({ error: "File not found in database" });
     }
 
-    // Use signed URL for faster direct downloads (especially for large files)
+
     const { data: signedUrlData, error: urlError } = await supabase
       .storage
       .from("smartstorage")
@@ -153,7 +150,7 @@ export const downloadFile = async (req, res) => {
       return res.status(500).json({ error: "Failed to generate download URL" });
     }
 
-    // Return signed URL for client-side direct download (fastest approach)
+
     return res.json({ 
       downloadUrl: signedUrlData.signedUrl,
       filename: fileRecord.filename,
@@ -165,13 +162,13 @@ export const downloadFile = async (req, res) => {
   }
 };
 
-// GET /api/download-proxy/:filename - Proxy download through server (for files with CORS/QUIC issues)
+
 export const downloadFileProxy = async (req, res) => {
   try {
     const { filename } = req.params;
     logInfo("Download proxy endpoint hit", { filename });
 
-    // Get file record to find storage path
+
     const { data: fileRecord, error: dbError } = await supabase
       .from("files")
       .select("storage_path, filename, file_type")
@@ -182,7 +179,7 @@ export const downloadFileProxy = async (req, res) => {
       return res.status(404).json({ error: "File not found in database" });
     }
 
-    // Download file from Supabase storage
+
     const { data: fileData, error: downloadError } = await supabase
       .storage
       .from("smartstorage")
@@ -193,10 +190,9 @@ export const downloadFileProxy = async (req, res) => {
       return res.status(500).json({ error: "Failed to download file from storage" });
     }
 
-    // Stream file to client
     const buffer = Buffer.from(await fileData.arrayBuffer());
     
-    // Set appropriate headers for download
+
     res.setHeader('Content-Disposition', `attachment; filename="${fileRecord.filename}"`);
     res.setHeader('Content-Type', fileData.type || 'application/octet-stream');
     res.setHeader('Content-Length', buffer.length);
@@ -205,6 +201,99 @@ export const downloadFileProxy = async (req, res) => {
     return res.send(buffer);
   } catch (err) {
     logError("Download proxy failed", { error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+
+export const deleteFile = async (req, res) => {
+  try {
+    const { filename } = req.params;
+    logInfo("Delete file endpoint hit", { filename });
+
+
+    const { data: fileRecord, error: dbError } = await supabase
+      .from("files")
+      .select("storage_path, filename")
+      .eq("filename", filename)
+      .single();
+
+    if (dbError || !fileRecord) {
+      return res.status(404).json({ error: "File not found in database" });
+    }
+
+    const { error: storageError } = await supabase
+      .storage
+      .from("smartstorage")
+      .remove([fileRecord.storage_path]);
+
+    if (storageError) {
+      logError("Failed to delete from storage", { error: storageError.message });
+    }
+
+    const { error: deleteError } = await supabase
+      .from("files")
+      .delete()
+      .eq("filename", filename);
+
+    if (deleteError) {
+      throw new Error(deleteError.message);
+    }
+
+    return res.json({ message: "File deleted successfully", filename });
+  } catch (err) {
+    logError("Delete file failed", { error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+
+export const deleteSchema = async (req, res) => {
+  try {
+    const { tableName } = req.params;
+    logInfo("Delete schema endpoint hit", { tableName });
+
+    if (!/^[a-zA-Z0-9_]+$/.test(tableName)) {
+      return res.status(400).json({ error: "Invalid table name" });
+    }
+
+
+    if (tableName.startsWith('document_')) {
+      const docId = tableName.replace('document_', '');
+      
+      const { error } = await supabase
+        .from("documents")
+        .delete()
+        .eq("id", docId);
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      return res.json({ message: "Document deleted successfully", tableName });
+    }
+
+    const { error: schemaError } = await supabase
+      .from("schemas")
+      .delete()
+      .eq("table_name", tableName);
+
+    if (schemaError) {
+      logError("Failed to delete schema", { error: schemaError.message });
+    }
+
+    const { error: dropError } = await supabase.rpc('exec_sql', {
+      sql: `DROP TABLE IF EXISTS ${tableName};`
+    });
+
+    if (dropError) {
+      logError("Failed to drop table", { error: dropError.message });
+      throw new Error(dropError.message);
+    }
+
+    return res.json({ message: "Schema and table deleted successfully", tableName });
+  } catch (err) {
+    logError("Delete schema failed", { error: err.message });
     return res.status(500).json({ error: err.message });
   }
 };

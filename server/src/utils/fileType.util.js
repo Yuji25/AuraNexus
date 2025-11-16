@@ -11,11 +11,11 @@ export const classifyByExtension = (filename) => {
   if (VIDEO_EXTS.has(ext)) return { category: "Videos", ext: ext || "unknown" };
   if (AUDIO_EXTS.has(ext)) return { category: "Audio", ext: ext || "unknown" };
   if (DOCUMENT_EXTS.has(ext)) return { category: "Documents", ext: ext || "unknown" };
-  // fallback: Other (Option C)
+  
   return { category: "Other", ext: ext || "unknown" };
 };
 
-// quick helper to check if extension triggers Phase 2 JSON parsing
+
 export const extTriggersJsonPhase = (ext) => {
   if (!ext) return false;
   const e = ext.toLowerCase();

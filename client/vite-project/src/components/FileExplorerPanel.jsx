@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { FolderOpen, File, ChevronRight, ChevronDown, Loader2, RefreshCw, Download } from 'lucide-react';
-import { getFiles, api } from '../lib/api';
+import { FolderOpen, File, ChevronRight, ChevronDown, Loader2, RefreshCw, Download, Trash2 } from 'lucide-react';
+import { getFiles, api, deleteFile } from '../lib/api';
 import { cn } from '../lib/utils';
 
 export default function FileExplorerPanel() {
@@ -9,6 +9,7 @@ export default function FileExplorerPanel() {
   const [error, setError] = useState(null);
   const [expandedFolders, setExpandedFolders] = useState(new Set());
   const [downloadingFiles, setDownloadingFiles] = useState(new Set());
+  const [deletingFiles, setDeletingFiles] = useState(new Set());
 
   const loadFiles = async () => {
     setLoading(true);
@@ -27,7 +28,7 @@ export default function FileExplorerPanel() {
     loadFiles();
   }, []);
 
-  // Build tree structure: Images/Documents/Others -> extension -> files
+  // sahi wala tree structure: Images/Documents/Others -> extension -> files
   const buildTree = () => {
     const tree = {
       'Images': {},
@@ -68,88 +69,35 @@ export default function FileExplorerPanel() {
   };
 
   const handleDownload = async (filename) => {
-    // Add to downloading set
+    
     setDownloadingFiles(prev => new Set(prev).add(filename));
     
     try {
-      // Check if file is PDF (use proxy to avoid QUIC issues)
-      const isPDF = filename.toLowerCase().endsWith('.pdf');
+      // Route ALL files through server proxy to avoid QUIC protocol errors
+      const response = await api.get(`/download-proxy/${encodeURIComponent(filename)}`, {
+        responseType: 'blob'
+      });
       
-      if (isPDF) {
-        // Use server proxy for PDFs to avoid QUIC protocol errors
-        const response = await api.get(`/download-proxy/${encodeURIComponent(filename)}`, {
-          responseType: 'blob'
+      const blob = response.data;
+      const blobUrl = window.URL.createObjectURL(blob);
+      
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.setAttribute('download', filename);
+      link.style.display = 'none';
+      document.body.appendChild(link);
+      link.click();
+      
+      // Cleanup
+      setTimeout(() => {
+        document.body.removeChild(link);
+        window.URL.revokeObjectURL(blobUrl);
+        setDownloadingFiles(prev => {
+          const next = new Set(prev);
+          next.delete(filename);
+          return next;
         });
-        
-        // Create blob URL and trigger download
-        const blob = response.data;
-        const blobUrl = window.URL.createObjectURL(blob);
-        
-        const link = document.createElement('a');
-        link.href = blobUrl;
-        link.setAttribute('download', filename);
-        link.style.display = 'none';
-        document.body.appendChild(link);
-        link.click();
-        
-        // Cleanup
-        setTimeout(() => {
-          document.body.removeChild(link);
-          window.URL.revokeObjectURL(blobUrl);
-          setDownloadingFiles(prev => {
-            const next = new Set(prev);
-            next.delete(filename);
-            return next;
-          });
-        }, 100);
-        
-      } else {
-        // Use direct signed URL for other files
-        const response = await api.get(`/download/${encodeURIComponent(filename)}`);
-        const { downloadUrl } = response.data;
-        
-        // Use XMLHttpRequest for direct download
-        const xhr = new XMLHttpRequest();
-        xhr.open('GET', downloadUrl, true);
-        xhr.responseType = 'blob';
-        
-        xhr.onload = function() {
-          if (xhr.status === 200) {
-            const blob = xhr.response;
-            const blobUrl = window.URL.createObjectURL(blob);
-            
-            const link = document.createElement('a');
-            link.href = blobUrl;
-            link.setAttribute('download', filename);
-            link.style.display = 'none';
-            document.body.appendChild(link);
-            link.click();
-            
-            setTimeout(() => {
-              document.body.removeChild(link);
-              window.URL.revokeObjectURL(blobUrl);
-              setDownloadingFiles(prev => {
-                const next = new Set(prev);
-                next.delete(filename);
-                return next;
-              });
-            }, 100);
-          } else {
-            throw new Error('Failed to download file');
-          }
-        };
-        
-        xhr.onerror = function() {
-          setDownloadingFiles(prev => {
-            const next = new Set(prev);
-            next.delete(filename);
-            return next;
-          });
-          alert('Download failed: Network error occurred');
-        };
-        
-        xhr.send();
-      }
+      }, 100);
       
     } catch (err) {
       setDownloadingFiles(prev => {
@@ -158,6 +106,28 @@ export default function FileExplorerPanel() {
         return next;
       });
       alert('Download failed: ' + (err.response?.data?.error || err.message));
+    }
+  };
+
+  const handleDelete = async (filename) => {
+    if (!confirm(`Are you sure you want to delete "${filename}"? This action cannot be undone.`)) {
+      return;
+    }
+
+    setDeletingFiles(prev => new Set(prev).add(filename));
+
+    try {
+      await deleteFile(filename);
+      
+      await loadFiles();
+    } catch (err) {
+      alert('Delete failed: ' + (err.response?.data?.error || err.message));
+    } finally {
+      setDeletingFiles(prev => {
+        const next = new Set(prev);
+        next.delete(filename);
+        return next;
+      });
     }
   };
 
@@ -266,6 +236,7 @@ export default function FileExplorerPanel() {
                               <div className="ml-6 space-y-1 mt-1">
                                 {extensionFiles.map((file, idx) => {
                                   const isDownloading = downloadingFiles.has(file.filename);
+                                  const isDeleting = deletingFiles.has(file.filename);
                                   return (
                                     <div
                                       key={idx}
@@ -273,21 +244,38 @@ export default function FileExplorerPanel() {
                                     >
                                       <span className="text-sm">📄</span>
                                       <span className="text-sm flex-1 truncate">{file.filename}</span>
-                                      <button
-                                        onClick={() => handleDownload(file.filename)}
-                                        disabled={isDownloading}
-                                        className={cn(
-                                          "p-1 hover:bg-primary/10 rounded transition-all",
-                                          isDownloading ? "opacity-100" : "opacity-0 group-hover:opacity-100"
-                                        )}
-                                        title={isDownloading ? "Downloading..." : "Download file"}
-                                      >
-                                        {isDownloading ? (
-                                          <Loader2 className="w-4 h-4 text-primary animate-spin" />
-                                        ) : (
-                                          <Download className="w-4 h-4 text-primary" />
-                                        )}
-                                      </button>
+                                      <div className="flex items-center gap-1">
+                                        <button
+                                          onClick={() => handleDownload(file.filename)}
+                                          disabled={isDownloading || isDeleting}
+                                          className={cn(
+                                            "p-1 hover:bg-primary/10 rounded transition-all",
+                                            isDownloading ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                                          )}
+                                          title={isDownloading ? "Downloading..." : "Download file"}
+                                        >
+                                          {isDownloading ? (
+                                            <Loader2 className="w-4 h-4 text-primary animate-spin" />
+                                          ) : (
+                                            <Download className="w-4 h-4 text-primary" />
+                                          )}
+                                        </button>
+                                        <button
+                                          onClick={() => handleDelete(file.filename)}
+                                          disabled={isDownloading || isDeleting}
+                                          className={cn(
+                                            "p-1 hover:bg-destructive/10 rounded transition-all",
+                                            isDeleting ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                                          )}
+                                          title={isDeleting ? "Deleting..." : "Delete file"}
+                                        >
+                                          {isDeleting ? (
+                                            <Loader2 className="w-4 h-4 text-destructive animate-spin" />
+                                          ) : (
+                                            <Trash2 className="w-4 h-4 text-destructive" />
+                                          )}
+                                        </button>
+                                      </div>
                                     </div>
                                   );
                                 })}
