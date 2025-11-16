@@ -125,7 +125,7 @@ export const getTableData = async (req, res) => {
   }
 };
 
-// GET /api/download/:filename - Download file from Supabase storage
+// GET /api/download/:filename - Download file from Supabase storage (optimized for large files)
 export const downloadFile = async (req, res) => {
   try {
     const { filename } = req.params;
@@ -134,7 +134,47 @@ export const downloadFile = async (req, res) => {
     // Get file record to find storage path
     const { data: fileRecord, error: dbError } = await supabase
       .from("files")
-      .select("storage_path, filename")
+      .select("storage_path, filename, file_type")
+      .eq("filename", filename)
+      .single();
+
+    if (dbError || !fileRecord) {
+      return res.status(404).json({ error: "File not found in database" });
+    }
+
+    // Use signed URL for faster direct downloads (especially for large files)
+    const { data: signedUrlData, error: urlError } = await supabase
+      .storage
+      .from("smartstorage")
+      .createSignedUrl(fileRecord.storage_path, 300); // 5 minutes expiry
+
+    if (urlError || !signedUrlData?.signedUrl) {
+      logError("Failed to generate signed URL", { error: urlError?.message });
+      return res.status(500).json({ error: "Failed to generate download URL" });
+    }
+
+    // Return signed URL for client-side direct download (fastest approach)
+    return res.json({ 
+      downloadUrl: signedUrlData.signedUrl,
+      filename: fileRecord.filename,
+      fileType: fileRecord.file_type
+    });
+  } catch (err) {
+    logError("Download file failed", { error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+// GET /api/download-proxy/:filename - Proxy download through server (for files with CORS/QUIC issues)
+export const downloadFileProxy = async (req, res) => {
+  try {
+    const { filename } = req.params;
+    logInfo("Download proxy endpoint hit", { filename });
+
+    // Get file record to find storage path
+    const { data: fileRecord, error: dbError } = await supabase
+      .from("files")
+      .select("storage_path, filename, file_type")
       .eq("filename", filename)
       .single();
 
@@ -153,17 +193,18 @@ export const downloadFile = async (req, res) => {
       return res.status(500).json({ error: "Failed to download file from storage" });
     }
 
-    // Convert blob to buffer and send as response
+    // Stream file to client
     const buffer = Buffer.from(await fileData.arrayBuffer());
     
-    // Set appropriate headers
+    // Set appropriate headers for download
     res.setHeader('Content-Disposition', `attachment; filename="${fileRecord.filename}"`);
     res.setHeader('Content-Type', fileData.type || 'application/octet-stream');
     res.setHeader('Content-Length', buffer.length);
+    res.setHeader('Cache-Control', 'no-cache');
     
     return res.send(buffer);
   } catch (err) {
-    logError("Download file failed", { error: err.message });
+    logError("Download proxy failed", { error: err.message });
     return res.status(500).json({ error: err.message });
   }
 };

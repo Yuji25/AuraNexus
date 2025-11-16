@@ -121,7 +121,7 @@ src/
 
 ## 🎉 Credits
 
-Built for the **Auraverser Hackathon 2025**
+Built for the **Auraverse '25 Hackathon, SST**
 
 ## React Compiler
 

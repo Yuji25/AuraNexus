@@ -8,6 +8,7 @@ export default function FileExplorerPanel() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [expandedFolders, setExpandedFolders] = useState(new Set());
+  const [downloadingFiles, setDownloadingFiles] = useState(new Set());
 
   const loadFiles = async () => {
     setLoading(true);
@@ -67,21 +68,95 @@ export default function FileExplorerPanel() {
   };
 
   const handleDownload = async (filename) => {
+    // Add to downloading set
+    setDownloadingFiles(prev => new Set(prev).add(filename));
+    
     try {
-      const response = await api.get(`/download/${encodeURIComponent(filename)}`, {
-        responseType: 'blob'
-      });
+      // Check if file is PDF (use proxy to avoid QUIC issues)
+      const isPDF = filename.toLowerCase().endsWith('.pdf');
       
-      // Create blob URL and trigger download
-      const url = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', filename);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
+      if (isPDF) {
+        // Use server proxy for PDFs to avoid QUIC protocol errors
+        const response = await api.get(`/download-proxy/${encodeURIComponent(filename)}`, {
+          responseType: 'blob'
+        });
+        
+        // Create blob URL and trigger download
+        const blob = response.data;
+        const blobUrl = window.URL.createObjectURL(blob);
+        
+        const link = document.createElement('a');
+        link.href = blobUrl;
+        link.setAttribute('download', filename);
+        link.style.display = 'none';
+        document.body.appendChild(link);
+        link.click();
+        
+        // Cleanup
+        setTimeout(() => {
+          document.body.removeChild(link);
+          window.URL.revokeObjectURL(blobUrl);
+          setDownloadingFiles(prev => {
+            const next = new Set(prev);
+            next.delete(filename);
+            return next;
+          });
+        }, 100);
+        
+      } else {
+        // Use direct signed URL for other files
+        const response = await api.get(`/download/${encodeURIComponent(filename)}`);
+        const { downloadUrl } = response.data;
+        
+        // Use XMLHttpRequest for direct download
+        const xhr = new XMLHttpRequest();
+        xhr.open('GET', downloadUrl, true);
+        xhr.responseType = 'blob';
+        
+        xhr.onload = function() {
+          if (xhr.status === 200) {
+            const blob = xhr.response;
+            const blobUrl = window.URL.createObjectURL(blob);
+            
+            const link = document.createElement('a');
+            link.href = blobUrl;
+            link.setAttribute('download', filename);
+            link.style.display = 'none';
+            document.body.appendChild(link);
+            link.click();
+            
+            setTimeout(() => {
+              document.body.removeChild(link);
+              window.URL.revokeObjectURL(blobUrl);
+              setDownloadingFiles(prev => {
+                const next = new Set(prev);
+                next.delete(filename);
+                return next;
+              });
+            }, 100);
+          } else {
+            throw new Error('Failed to download file');
+          }
+        };
+        
+        xhr.onerror = function() {
+          setDownloadingFiles(prev => {
+            const next = new Set(prev);
+            next.delete(filename);
+            return next;
+          });
+          alert('Download failed: Network error occurred');
+        };
+        
+        xhr.send();
+      }
+      
     } catch (err) {
+      setDownloadingFiles(prev => {
+        const next = new Set(prev);
+        next.delete(filename);
+        return next;
+      });
       alert('Download failed: ' + (err.response?.data?.error || err.message));
     }
   };
@@ -189,22 +264,33 @@ export default function FileExplorerPanel() {
                             
                             {isExtensionExpanded && (
                               <div className="ml-6 space-y-1 mt-1">
-                                {extensionFiles.map((file, idx) => (
-                                  <div
-                                    key={idx}
-                                    className="flex items-center gap-2 p-2 hover:bg-muted rounded-lg transition-colors group"
-                                  >
-                                    <span className="text-sm">📄</span>
-                                    <span className="text-sm flex-1 truncate">{file.filename}</span>
-                                    <button
-                                      onClick={() => handleDownload(file.filename)}
-                                      className="opacity-0 group-hover:opacity-100 p-1 hover:bg-primary/10 rounded transition-all"
-                                      title="Download file"
+                                {extensionFiles.map((file, idx) => {
+                                  const isDownloading = downloadingFiles.has(file.filename);
+                                  return (
+                                    <div
+                                      key={idx}
+                                      className="flex items-center gap-2 p-2 hover:bg-muted rounded-lg transition-colors group"
                                     >
-                                      <Download className="w-4 h-4 text-primary" />
-                                    </button>
-                                  </div>
-                                ))}
+                                      <span className="text-sm">📄</span>
+                                      <span className="text-sm flex-1 truncate">{file.filename}</span>
+                                      <button
+                                        onClick={() => handleDownload(file.filename)}
+                                        disabled={isDownloading}
+                                        className={cn(
+                                          "p-1 hover:bg-primary/10 rounded transition-all",
+                                          isDownloading ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                                        )}
+                                        title={isDownloading ? "Downloading..." : "Download file"}
+                                      >
+                                        {isDownloading ? (
+                                          <Loader2 className="w-4 h-4 text-primary animate-spin" />
+                                        ) : (
+                                          <Download className="w-4 h-4 text-primary" />
+                                        )}
+                                      </button>
+                                    </div>
+                                  );
+                                })}
                               </div>
                             )}
                           </div>
