@@ -7,6 +7,7 @@ dotenv.config();
 // Importing routes
 import uploadRoutes from "./routes/upload.route.js";
 import jsonRoutes from "./routes/json.route.js";
+import dataRoutes from "./routes/data.route.js";
 
 const app = express();
 app.use(cors());
@@ -27,6 +28,7 @@ app.get("/test-db", async (req, res) => {
 // Main routes
 app.use("/api", uploadRoutes);
 app.use("/api", jsonRoutes);
+app.use("/api", dataRoutes);
 
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => console.log(`🚀 Server running on http://localhost:${PORT}`));
